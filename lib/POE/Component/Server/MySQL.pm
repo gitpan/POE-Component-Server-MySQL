@@ -2,7 +2,7 @@ package POE::Component::Server::MySQL;
 use Moose;
 use MooseX::MethodAttributes;
 
-our $VERSION = "0.01";
+our $VERSION = "0.02";
 
 use POE;
 use POE::Kernel;
@@ -144,7 +144,7 @@ sub _socket_birth {
    
             $heap->{client} = POE::Wheel::ReadWrite->new(
                Handle       => $socket,
-               Driver       => POE::Driver::SysRW->new( BlockSize => 256 ),
+               Driver       => POE::Driver::SysRW->new(),
                Filter       => POE::Filter::Block->new(
                   LengthCodec => [ \&_length_encoder, \&_length_decoder ]
                ),

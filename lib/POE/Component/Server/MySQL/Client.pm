@@ -323,7 +323,7 @@ sub client_input {
          $event = 'relay';
       }   
 
-      print '$event = '.$event." // $data \n";
+#      print '$event = '.$event." \n";
 
       if ($event) {
          $self->$event($data, @placeholders);
