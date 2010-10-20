@@ -2,7 +2,7 @@ package POE::Component::Server::MySQL;
 use Moose;
 use MooseX::MethodAttributes;
 
-our $VERSION = "0.01_01";
+our $VERSION = "0.01";
 
 use POE;
 use POE::Kernel;
@@ -31,6 +31,7 @@ has 'local_user' => (is => 'rw', isa => 'Str');
 has 'local_password' => (is => 'rw', isa => 'Str');
 
 has 'listener' => (is => 'rw', isa => 'Any');
+has 'session' => (is => 'rw', isa => 'Any');
 
 sub DEBUG {1}
 
@@ -118,13 +119,15 @@ sub _socket_birth {
    my ($socket, $address, $port) = @_[ARG0, ARG1, ARG2];
    $address = inet_ntoa($address);
 
-
    my $client = POE::Component::Server::MySQL::Client->new({
       server_class   => ref($self),
-      local_dsn      => $self->local_dsn,
-      local_user     => $self->local_user,
-      local_password => $self->local_password,
    });
+   
+   print '$self->local_dsn = '.$self->local_dsn."\n";
+   
+   $client->local_dsn($self->local_dsn);
+   $client->local_user($self->local_user);
+   $client->local_password($self->local_password);
    
    POE::Session->create(
       object_states => [
@@ -245,7 +248,10 @@ sub run {
    POE::Kernel->run();
 }
 
-sub _length_encoder { return; }
+sub _length_encoder { 
+   return; 
+
+}
 
 sub _length_decoder {
    my $stuff = shift;

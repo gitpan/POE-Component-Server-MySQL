@@ -12,4 +12,14 @@ sub fortune : Regexp('qr{fortune}io') {
 
 }
 
+
+sub hello_world : Regexp('qr{hello world}io') {
+   my ($self) = @_;
+   
+	
+   $self->send_results(['Hello'],[['World']]);
+
+}
+
+
 1;

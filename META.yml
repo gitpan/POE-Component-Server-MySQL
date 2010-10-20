@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               POE-Component-Server-MySQL
-version:            0.01_01
+version:            0.01
 abstract:           A MySQL POE Server
 author:
     - Eriam Schaffter <eriam@cpan.org>

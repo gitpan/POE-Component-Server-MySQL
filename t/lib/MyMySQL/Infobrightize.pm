@@ -28,9 +28,14 @@ sub infobrightize : Regexp('qr{(INFOBRIGHTIZE\(('|"|)(.*)('|")\))}io') { #'
 	my $sth = $self->local_dbh->prepare("show create table ${db_name}.${table_name}");
 	$sth->execute();
 	
+   if ($DBI::err) {
+		$self->send_error($DBI::errstr);
+		return;
+   }
+	
    my @array = $sth->fetchrow_array();
 
-   my $create_table = lc($array[1]).";";
+   my $create_table = $array[1].";";
    $create_table =~  s/`//g;
    
    my $t = SQL::Translator->new(        
@@ -52,25 +57,43 @@ sub infobrightize : Regexp('qr{(INFOBRIGHTIZE\(('|"|)(.*)('|")\))}io') { #'
    }
    
    $self->local_dbh->do("drop table if exists ${db_name}.${table_name}_ib");
+   if ($DBI::err) {
+		$self->send_error($DBI::errstr);
+		return;
+   }
+   
+#   print $create_table."\n";
    
    $self->local_dbh->do($create_table);
+   if ($DBI::err) {
+		$self->send_error($DBI::errstr);
+		return;
+   }
    
    my $filename = time.$$;
    
    $self->local_dbh->do('
       select *
-      into outfile \'/tmp/'.${filename}.'.txt\'
+      into outfile \'/tmp/'.${filename}.'.dat\'
       fields terminated by \'~\' enclosed by \'\'
       lines terminated by \'\n\'
       from '.$db_name.'.'.$table_name.';
    ');
+   if ($DBI::err) {
+		$self->send_error($DBI::errstr);
+		return;
+   }
    
    $self->local_dbh->do("
-      load data infile '/tmp/${filename}.txt'
+      load data infile '/tmp/${filename}.dat'
       into table ".$db_name.'.'.$table_name."_ib
       fields terminated by '~' 
       enclosed by 'NULL';
    ");
+   if ($DBI::err) {
+		$self->send_error($DBI::errstr);
+		return;
+   }
 		
 	my $fortune = `fortune -n=60`;
 	chomp($fortune);
@@ -82,6 +105,8 @@ sub infobrightize : Regexp('qr{(INFOBRIGHTIZE\(('|"|)(.*)('|")\))}io') { #'
       ['fortune'],
       [[$fortune]]
    );
+   
+   unlink ('/tmp/'.$filename.'.dat');
    
    print "OK \n";
 }

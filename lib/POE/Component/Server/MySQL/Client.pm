@@ -42,6 +42,9 @@ has 'default'     => (is => 'rw', isa => 'Any');
 
 has 'type_info' => (is => 'rw', isa => 'Any');
 
+has '_buffer' => (is => 'rw', isa => 'Any');
+has 'buffer' => (is => 'rw', isa => 'Any');
+
 use constant FIELD_CATALOG      => 0;
 use constant FIELD_DB           => 1;
 use constant FIELD_TABLE        => 2;
@@ -159,6 +162,14 @@ use constant SET_FLAG               => 2048;
 use constant NO_DEFAULT_VALUE_FLAG  => 4096;
 use constant NUM_FLAG               => 32768;
 
+
+sub BUILD {
+   my ($self) = @_;
+
+
+   
+}
+
 sub _authenticate {
    my ($self, $data) = @_;
    
@@ -244,7 +255,21 @@ sub client_input {
    my ( $kernel, $session, $heap, $self ) = @_[ KERNEL, SESSION, HEAP, OBJECT];
    my $data = $_[ARG0];
    
-   print "client_input $data on $$ \n";
+#   print "client_input $data on $$ \n";
+   
+   unless ($self->local_dbh) {
+      
+      unless ($self->local_dsn) {
+         $self->send_error('No local_dsn');
+         return;
+      }
+      
+      $self->local_dbh(
+         DBI->connect($self->local_dsn, $self->local_user, $self->local_password)
+      );
+      
+   }
+
    
    if (length($data) > 1) {
       $self->packet_count($self->packet_count + 1);
@@ -257,9 +282,19 @@ sub client_input {
       $self->_authenticate($data);
 	}
 	else {
-      my $header_flags = substr($data, 0, 4);
+      my $header_flags = substr($data, 0, 4);      
+      my $command = unpack('C', substr($data, 3, 1));
+      
       $data = substr($data, 4);
-      return unless length($data);
+      
+      if ($command == COM_INIT_DB) {
+         $data = 'USE '.$data;
+      }
+      
+      unless (length($data)) {
+         $self->send_ok;
+         return;
+      }
       
       my $event;
       my @placeholders;
@@ -288,6 +323,8 @@ sub client_input {
          $event = 'relay';
       }   
 
+      print '$event = '.$event." // $data \n";
+
       if ($event) {
          $self->$event($data, @placeholders);
       }
@@ -307,15 +344,6 @@ sub client_input {
 
 sub relay {
    my ($self, $query) = @_;
-
-   unless ($self->local_dbh) {
-      
-      return && $self->send_error('No local_dsn') unless $self->local_dsn;
-      
-      $self->local_dbh(
-         DBI->connect($self->local_dsn, $self->local_user, $self->local_password)
-      );
-   }
    
    $self->local_dbh->{'mysql_use_result'} = 1;
    
@@ -343,14 +371,12 @@ sub relay {
 	} 
 	else {
 
-#      my @header = @{ $sth->{NAME} };
-
       unless ($self->type_info) {
   
          my $infos = ();
    
          my @type_info = @{$self->local_dbh->type_info_all()};
-   
+            
    		my $sql_col = $type_info[0]->{DATA_TYPE};
    		my $mysql_col = $type_info[0]->{mysql_native_type};
    
@@ -358,12 +384,13 @@ sub relay {
    			my $sql_value = $type->[$sql_col];
    			my $mysql_value = $type->[$mysql_col];
    	
-   			$infos->{$sql_value} = $mysql_value;
+   			$infos->{$sql_value} = $mysql_value if exists $infos->{$sql_value};
    		}
    		
    		$self->type_info($infos);
    		
       }
+      
 
 		my @definitions = map {
 			my $flags = 0;
@@ -374,12 +401,8 @@ sub relay {
 			$flags = $flags | AUTO_INCREMENT_FLAG  if $sth->{mysql_is_auto_increment}->[$_];
 
          my $type = $self->type_info->{$sth->{TYPE}->[$_]};
-         
-         $type = 15 if $type == 248;
 
          my $def_length = $sth->{mysql_length}->[$_];
-
-         $def_length = 250 if $def_length > 250;
          
 			$self->definition({
 				name     => $sth->{NAME}->[$_],
@@ -393,16 +416,12 @@ sub relay {
       my @result = @{ $sth->fetchall_arrayref() };
       $affected_rows = scalar(@result);
 
-      print '$affected_rows = '.$affected_rows." \n";
-      print '$fields = '.$sth->{NUM_OF_FIELDS}." \n";
-
       $self->_send_header_packet($sth->{NUM_OF_FIELDS}, $affected_rows);
       $self->_send_definitions(\@definitions);
       $self->_send_eof;
       
       my @rows;
       my $i = 1;
-#   	while (my @row = $sth->fetchrow_array()) {
       foreach my $row_ref (@result) {
          my @row = @{$row_ref};
    	      	   
@@ -410,7 +429,6 @@ sub relay {
    	   @{ $rows[$i] } = @row;
    	   
    		if ($i == 10000) {
-#   	      print "\n send a chunk of ".scalar(@rows)." rows \n";
    		   $self->_send_rows(\@rows, {
    		      chunked => 1,
    		   });
@@ -421,8 +439,6 @@ sub relay {
       		$i++;
       	}
    	}
-   	
-#   	print 'send a chunk of '.scalar(@rows)." rows \n";
    	
       $self->_send_rows(\@rows);
       $self->_send_eof(undef,undef,1);
@@ -437,23 +453,12 @@ sub _send_definitions {
 
 	my $last_send_result;
 	
-#   my $packet = $self->_length_coded_binary(scalar(@{$definitions}));
-#   $packet .= $self->_length_coded_binary($n_rows);
-   
-#   $self->_write_to_client($packet);
-
    foreach my $definition (@{$definitions}) {
       $definition = $self->definition({ name => $definition })
          unless ref($definition) eq 'POE::Component::Server::MySQL::Definition';
       $self->_send_definition($definition);
    }
-   
-#   if (not defined $skip_envelope) {
-#      $self->_write_to_client(chr(0xfe));
-#   }
-#   else {
-#      return $last_send_result;
-#   }
+
 }
 
 sub _send_definition {
@@ -482,11 +487,6 @@ sub _send_definition {
 		$field_org_name
 	));
    
-#   print '$field_name = '.$field_name."\n";
-#   print '$field_type = '.$field_type."\n";
-#   print '$field_default = '.$field_default."\n";
-   
-   
    $payload .= chr(0x0c);
    $payload .= pack('v', 11);
    $payload .= pack('V', $field_length);
@@ -494,7 +494,6 @@ sub _send_definition {
    $payload .= defined $field_flags ? pack('v', $field_flags) : pack('v', 0);
    $payload .= defined $field_decimals ? chr($field_decimals) : pack('v', 0);
    $payload .= pack('v', 0);
-#   $payload .= defined $field_default ? $self->_length_coded_string($field_default) : pack('v', 0);
 
    $self->_write_to_client($payload);
 }
@@ -554,14 +553,10 @@ sub _add_header {
 
 sub _write_to_client {
    my ($self, $message, $reinit) = @_;
-   
+      
    $message = $self->_add_header($message, $reinit);
-   
    $self->wheel->put($message);
-   
-   if ($reinit) {
-      $self->wheel->flush;
-   }
+
 }
 
 
@@ -607,7 +602,7 @@ sub client_error {
 sub client_connect {
    my ( $self, $kernel, $session, $heap ) = @_[OBJECT, KERNEL, SESSION, HEAP];
    
-   $self->banner("POE::Component::Server::MySQL ".$VERSION."\0");
+   $self->banner("5.1.40-log\0");
    $self->salt(join('',map { chr(int(rand(255))) } (1..20)));
    $self->charset(0x21);
    $self->tid($$);
@@ -665,7 +660,7 @@ sub client_disconnect {
 sub _send_header_packet {
    my ($self, $n_fields, $n_rows) = @_;
 
-   print '$n_fields = '.$n_fields."\n";
+#   print '$n_fields = '.$n_fields."\n";
 
    my $packet = $self->_length_coded_binary($n_fields);
 #   $packet .= $self->_length_coded_binary($n_rows);
@@ -711,10 +706,15 @@ sub _send_rows {
 
 sub send_results {
    my ($self, $definitions, $data, $opt) = @_;
-     
-   $self->_send_header_packet(scalar($data), $opt);
+
+   unless (ref($data) eq 'ARRAY') {
+      $self->send_error('Internal error .. F**K !');
+      return;
+   }
+   
+   $self->_send_header_packet(scalar(@{$data}), $opt);
    $self->_send_definitions($definitions, $opt);
-#   $self->_send_eof;
+   $self->_send_eof;
    $self->_send_rows($data, $opt);
    $self->_send_eof(undef,undef,1);
 }
